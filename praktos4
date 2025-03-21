@@ -1,0 +1,206 @@
+import threading
+import datetime
+import json
+import os
+import hashlib
+import base64
+import time
+
+current_user = None
+
+def generate_key(password):
+    return hashlib.sha256(password.encode()).digest()
+
+def encrypt_text(text, key):
+    encrypted = [chr(ord(char) ^ key[i % len(key)]) for i, char in enumerate(text)]
+    return base64.b64encode(''.join(encrypted).encode()).decode()
+
+def decrypt_text(encrypted_text, key):
+    encrypted_text = base64.b64decode(encrypted_text.encode()).decode()
+    decrypted = [chr(ord(char) ^ key[i % len(key)]) for i, char in enumerate(encrypted_text)]
+    return ''.join(decrypted)
+
+def read_file(file_path):
+    with open(file_path, 'r') as file:
+        return file.read()
+
+def write_file(file_path, content):
+    with open(file_path, 'w') as file:
+        file.write(content)
+
+def save_encrypted_data(encrypted_data, file_path):
+    with open(file_path, 'w') as file:
+        file.write(encrypted_data)
+
+def log_action(username, action):
+    timestamp = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    log_message = f"[INFO] [{timestamp}] [{username}] -- {action}\n"
+    write_log("logs/actions.log", log_message)
+
+def log_error(username, error_message):
+    timestamp = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    log_message = f"[ERROR] [{timestamp}] [{username}] -- {error_message}\n"
+    write_log("logs/errors.log", log_message)
+
+def write_log(log_path, log_message):
+    with open(log_path, "a") as log_file:
+        log_file.write(log_message)
+
+def register_user(username, password):
+    try:
+        users = load_users()
+        if username in users:
+            return False  # Пользователь уже существует
+        users[username] = password
+        save_users(users)
+        return True
+    except Exception as e:
+        log_error(None, f"Ошибка регистрации: {str(e)}")
+        return False
+
+def login_user(username, password):
+    try:
+        users = load_users()
+        return users.get(username) == password
+    except Exception as e:
+        log_error(None, f"Ошибка входа: {str(e)}")
+        return False
+
+def load_users():
+    try:
+        with open("data/users.json", "r") as file:
+            return json.load(file)
+    except FileNotFoundError:
+        return {}
+
+def save_users(users):
+    with open("data/users.json", "w") as file:
+        json.dump(users, file)
+
+def encrypt_file(file_path, key):
+    try:
+        text = read_file(file_path)
+        encrypted = encrypt_text(text, key)
+        encrypted_file_path = f"data/encrypted_{os.path.basename(file_path)}"
+        save_data_in_background(encrypted, encrypted_file_path)  # Сохранение в фоновом потоке
+        log_action(current_user, f"Файл {file_path} зашифрован и сохранен как {encrypted_file_path}")
+        print(f"Файл успешно зашифрован и сохранен как {encrypted_file_path}")
+    except Exception as e:
+        log_error(current_user, f"Ошибка при шифровании файла {file_path}: {str(e)}")
+        print(f"Ошибка при шифровании файла: {str(e)}")
+
+def decrypt_file(file_path, key):
+    try:
+        encrypted_text = read_file(file_path)
+        decrypted = decrypt_text(encrypted_text, key)
+        decrypted_file_path = f"data/decrypted_{os.path.basename(file_path)}"
+        save_data_in_background(decrypted, decrypted_file_path)  # Сохранение в фоновом потоке
+        log_action(current_user, f"Файл {file_path} расшифрован и сохранен как {decrypted_file_path}")
+        print(f"Файл успешно расшифрован и сохранен как {decrypted_file_path}")
+    except Exception as e:
+        log_error(current_user, f"Ошибка при расшифровании файла {file_path}: {str(e)}")
+        print(f"Ошибка при расшифровании файла: {str(e)}")
+
+def encrypt_text_input(key):
+    text = input("Введите текст для шифрования: ")
+    encrypted_text = encrypt_text(text, key)
+    print(f"Зашифрованный текст: {encrypted_text}")
+    return encrypted_text
+
+def decrypt_text_input(key):
+    encrypted_text = input("Введите зашифрованный текст: ")
+    decrypted_text = decrypt_text(encrypted_text, key)
+    print(f"Расшифрованный текст: {decrypted_text}")
+    return decrypted_text
+
+def auto_save_thread():
+    while True:
+        time.sleep(10)  # Сохранять каждые 10 секунд
+        users = load_users()
+        save_users(users)
+        log_action("System", "Автоматическое сохранение данных выполнено.")
+
+def save_data_in_background(data, file_path):
+    def save():
+        with open(file_path, 'w') as file:
+            file.write(data)
+    threading.Thread(target=save).start()
+
+def main_menu():
+    global current_user
+    while True:
+        print("\n--- Меню ---")
+        print("1. Зарегистрироваться")
+        print("2. Войти")
+        print("3. Выйти")
+        choice = input("Выберите действие: ")
+        if choice == "1":
+            username = input("Введите имя пользователя: ")
+            password = input("Введите пароль: ")
+            if register_user(username, password):
+                print("Регистрация успешна!")
+            else:
+                print("Пользователь уже существует.")
+        elif choice == "2":
+            username = input("Введите имя пользователя: ")
+            password = input("Введите пароль: ")
+            if login_user(username, password):
+                current_user = username
+                print("Вход выполнен успешно!")
+                user_menu()
+            else:
+                print("Неверное имя пользователя или пароль.")
+        elif choice == "3":
+            print("Выход из программы.")
+            break
+        else:
+            print("Неверный выбор.")
+
+def user_menu():
+    global current_user
+    while True:
+        print("\n--- Пользовательское меню ---")
+        print("1. Зашифровать текст")
+        print("2. Расшифровать текст")
+        print("3. Зашифровать файл")
+        print("4. Расшифровать файл")
+        print("5. Выйти из аккаунта")
+        choice = input("Выберите действие: ")
+        if choice == "1":
+            password = input("Введите пароль для шифрования текста: ")
+            key = generate_key(password)
+            encrypt_text_input(key)
+        elif choice == "2":
+            password = input("Введите пароль для расшифрования текста: ")
+            key = generate_key(password)
+            decrypt_text_input(key)
+        elif choice == "3":
+            file_path = input("Введите путь до файла: ")
+            password = input("Введите пароль для шифрования: ")
+            key = generate_key(password)
+            encrypt_file(file_path, key)
+        elif choice == "4":
+            file_path = input("Введите путь до зашифрованного файла: ")
+            password = input("Введите пароль для расшифрования: ")
+            key = generate_key(password)
+            decrypt_file(file_path, key)
+        elif choice == "5":
+            current_user = None
+            print("Выход из аккаунта выполнен.")
+            break
+        else:
+            print("Неверный выбор.")
+
+def init_directories():
+    if not os.path.exists("data"):
+        os.makedirs("data")
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    if not os.path.exists("data/users.json"):
+        with open("data/users.json", "w") as file:
+            json.dump({}, file)
+
+if __name__ == "__main__":
+    init_directories()
+    threading.Thread(target=auto_save_thread, daemon=True).start()
+    main_menu()
